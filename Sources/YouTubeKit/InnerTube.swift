@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 @available(iOS 13.0, watchOS 6.0, tvOS 13.0, macOS 10.15, *)
 class InnerTube {
@@ -78,6 +79,8 @@ class InnerTube {
     private let apiKey: String
     private let context: Context
     private let headers: [String: String]
+    private let cookieHeader: String?
+    private let sapisidHash: String?
     private let playerParams: String?
 
     private let ytcfg: Extraction.YtCfg
@@ -85,7 +88,7 @@ class InnerTube {
     
     private let baseURL = "https://www.youtube.com/youtubei/v1"
     
-    init(client: ClientType = .ios, signatureTimestamp: Int?, ytcfg: Extraction.YtCfg, useOAuth: Bool = false, allowCache: Bool = true) {
+    init(client: ClientType = .ios, signatureTimestamp: Int?, ytcfg: Extraction.YtCfg, useOAuth: Bool = false, allowCache: Bool = true, authCookies: [HTTPCookie]? = nil) {
         self.context = defaultClients[client]!.context
         self.apiKey = defaultClients[client]!.apiKey
         self.headers = defaultClients[client]!.headers
@@ -94,6 +97,8 @@ class InnerTube {
         self.ytcfg = ytcfg
         self.useOAuth = useOAuth
         self.allowCache = allowCache
+        self.cookieHeader = InnerTube.makeCookieHeader(from: authCookies)
+        self.sapisidHash = InnerTube.makeSAPISIDHash(from: authCookies)
         
         if useOAuth && allowCache {
             // TODO: load from cache file
@@ -129,6 +134,22 @@ class InnerTube {
             URLQueryItem(name: "racyCheckOk", value: "true")
         ]
     }
+
+    private static func makeCookieHeader(from cookies: [HTTPCookie]?) -> String? {
+        guard let cookies, !cookies.isEmpty else { return nil }
+        return HTTPCookie.requestHeaderFields(with: cookies)["Cookie"]
+    }
+
+    private static func makeSAPISIDHash(from cookies: [HTTPCookie]?, origin: String = "https://www.youtube.com") -> String? {
+        guard let cookies,
+              let sapisid = cookies.first(where: { $0.name == "SAPISID" || $0.name == "__Secure-3PAPISID" })?.value else {
+            return nil
+        }
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let input = "\(timestamp) \(sapisid) \(origin)"
+        let digest = Insecure.SHA1.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "\(timestamp)_\(digest)"
+    }
     
     private func callAPI<D: Encodable, T: Decodable>(endpoint: String, query: [URLQueryItem], object: D) async throws -> T {
         let data = try JSONEncoder().encode(object)
@@ -154,6 +175,16 @@ class InnerTube {
         
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        if let cookieHeader {
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
+        
+        if let sapisidHash {
+            request.setValue("SAPISIDHASH \(sapisidHash)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "X-Origin")
+            request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
         }
         
         // TODO: handle oauth auth case again
