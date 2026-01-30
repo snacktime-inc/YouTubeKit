@@ -371,7 +371,10 @@ public class YouTube {
             let signatureTimestamp = try await signatureTimestamp
             let ytcfg = try await ytcfg
             
-            let innertubeClients: [InnerTube.ClientType] = [.iosDowngraded, .androidVR]
+            // Use different clients based on whether cookies are provided (matching yt-dlp strategy)
+            let innertubeClients: [InnerTube.ClientType] = authCookies != nil && !authCookies!.isEmpty
+                ? [.tvDowngraded, .web, .webSafari]  // Cookie authenticated: use TV client
+                : [.iosDowngraded, .androidVR]        // No cookies: use mobile clients
             
             let results: [Result<InnerTube.VideoInfo, Error>] = await innertubeClients.concurrentMap { [self, videoID, useOAuth, allowOAuthCache] client in
                 let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache, authCookies: self.authCookies)
